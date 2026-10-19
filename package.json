@@ -1,0 +1,16 @@
+{
+  "name": "panther-bingo",
+  "version": "1.0.0",
+  "description": "Panther Bingo — Multiplayer Bingo Game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0",
+    "uuid": "^9.0.0",
+    "pg": "^8.11.0",
+    "node-telegram-bot-api": "^0.64.0"
+  }
+}
