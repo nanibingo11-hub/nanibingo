@@ -998,7 +998,7 @@ function startTelegramBot(){
 
   const MAIN_MENU = {
     keyboard: [
-      [{ text: '🎮 Play Now' }, { text: '📝 Register' }],
+      [{ text: '🎮 Play Now' }],
       [{ text: '💰 Deposit' }, { text: '💸 Withdraw' }],
       [{ text: '🔀 Transfer' }, { text: '🎁 Invite Friends' }],
       [{ text: '🎯 Game Patterns' }, { text: '📖 Instructions' }],
