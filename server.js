@@ -415,6 +415,36 @@ function callNumber(room){
   room.calledNumbers.push(drawn);
   broadcast(room,{type:'numberCalled',number:drawn,calledNumbers:room.calledNumbers,callCount:room.calledNumbers.length,claimWindowMs:CLAIM_WINDOW_MS});
   room.claimWindowOpen=true; scheduleNextCall(room);
+  runAutoPlay(room);
+}
+
+// ─── AUTO PLAY ───────────────────────────────────────────────
+// For every player who turned Auto Play on, mark all called numbers on their
+// card(s) server-side and, if a winning pattern is complete, file the BINGO
+// claim automatically. Works even if the player's connection dropped.
+function runAutoPlay(room){
+  if(room.status!=='playing') return;
+  const called=new Set(room.calledNumbers);
+  const markedOf=card=>card?card.numbers.reduce((a,n,i)=>{if(i!==12&&called.has(n))a.push(i);return a;},[]):[];
+  let claimed=false;
+  room.players.forEach(p=>{
+    if(!p.autoPlay||p.disqualified||(!p.cardId&&!p.cardId2)) return;
+    if(room.claimedThisRound.find(c=>c.playerId===p.playerId)) return;
+    const card1=p.cardId?getCard(p.cardId):null;
+    const card2=p.cardId2?getCard(p.cardId2):null;
+    const m1=markedOf(card1), m2=markedOf(card2);
+    const win1=card1&&checkWin(card1.numbers,room.calledNumbers,m1);
+    const win2=card2&&checkWin(card2.numbers,room.calledNumbers,m2);
+    if(!win1&&!win2) return;
+    room.claimedThisRound.push({playerId:p.playerId,markedIndices:m1,cardId2:p.cardId2||null,markedIndices2:m2});
+    send(p.ws,{type:'autoBingo'});
+    claimed=true;
+  });
+  if(claimed){
+    if(room.callTimer) clearTimeout(room.callTimer);
+    if(room.claimEvalTimer) clearTimeout(room.claimEvalTimer);
+    room.claimEvalTimer=setTimeout(()=>evaluateClaims(room),CLAIM_COLLECT_MS);
+  }
 }
 
 function evaluateClaims(room){
@@ -585,12 +615,14 @@ if(!ep&&msg.telegramId){
   }
   if(ep){
     ep.ws=ws; client.roomId=msg.roomId;
+    if(client.autoPlay===undefined) client.autoPlay=!!ep.autoPlay;
+    ep.autoPlay=!!client.autoPlay;
     const card=ep.cardId?getCard(ep.cardId):null;
     const card2=ep.cardId2?getCard(ep.cardId2):null;
     send(ws,{type:'reconnected',roomId:msg.roomId,stakeId:room.stakeId,
       cardId:ep.cardId,cardNumbers:card?card.numbers:[],
       cardId2:ep.cardId2||null,cardNumbers2:card2?card2.numbers:[],
-      calledNumbers:room.calledNumbers,pot:room.pot,playerCount:room.players.length});
+      calledNumbers:room.calledNumbers,pot:room.pot,playerCount:room.players.length,autoPlay:!!ep.autoPlay});
   } else {
     send(ws,{type:'reconnectFailed'});
   }
@@ -604,7 +636,7 @@ if(!ep&&msg.telegramId){
           // ── If a game for this stake is already in progress, join as a spectator ──
           const liveRoom=Object.values(rooms).find(r=>r.stakeId===msg.stakeId&&r.status==='playing');
           if(liveRoom){
-            liveRoom.players.push({playerId:client.playerId,playerName:client.playerName,telegramId:client.telegramId,ws,cardId:null,hasPaid:false,disqualified:false});
+            liveRoom.players.push({playerId:client.playerId,playerName:client.playerName,telegramId:client.telegramId,ws,cardId:null,hasPaid:false,disqualified:false,autoPlay:!!client.autoPlay});
             client.roomId=liveRoom.roomId;
             send(ws,{type:'joinedRoom',roomId:liveRoom.roomId,stakeId:liveRoom.stakeId,balance:client.balance,status:liveRoom.status});
             send(ws,{type:'spectating',pot:prizePoolOf(liveRoom),playerCount:liveRoom.players.filter(p=>p.hasPaid).length,calledNumbers:liveRoom.calledNumbers});
@@ -615,7 +647,7 @@ if(!ep&&msg.telegramId){
           
           const room=getOrCreateRoom(msg.stakeId);
           if(room.status!=='waiting'&&room.status!=='countdown') return send(ws,{type:'error',message:'Game already running.'});
-          room.players.push({playerId:client.playerId,playerName:client.playerName,telegramId:client.telegramId,ws,cardId:null,cardId2:null,hasPaid:false,disqualified:false});
+          room.players.push({playerId:client.playerId,playerName:client.playerName,telegramId:client.telegramId,ws,cardId:null,cardId2:null,hasPaid:false,disqualified:false,autoPlay:!!client.autoPlay});
           client.roomId=room.roomId;
           send(ws,{type:'joinedRoom',roomId:room.roomId,stakeId:room.stakeId,balance:client.balance,status:room.status,playerCount:room.players.reduce((sum,p)=>(p.cardId?sum+1:sum)+(p.cardId2?1:0),0),stakeAmount:room.stake});
           broadcastCardPool(room); broadcastLobby();
@@ -697,6 +729,17 @@ break;
             send(ws,{type:'balanceUpdate',balance:client.balance});
             broadcastCardDiff(room,releasedIds); break;
           }
+          break;
+        }
+        case 'setAutoPlay':{
+          const on=!!msg.enabled;
+          client.autoPlay=on;
+          if(client.roomId){
+            const room=rooms[client.roomId];
+            const p=room&&room.players.find(p=>p.playerId===client.playerId);
+            if(p) p.autoPlay=on;
+          }
+          send(ws,{type:'autoPlaySet',enabled:on});
           break;
         }
         case 'claimBingo':{
@@ -998,7 +1041,11 @@ function startTelegramBot(){
 
   const MAIN_MENU = {
     keyboard: [
-      [{ text: '🎮 Play Now' }]
+      [{ text: '🎮 Play Now' }, { text: '📝 Register' }],
+      [{ text: '💰 Deposit' }, { text: '💸 Withdraw' }],
+      [{ text: '🔀 Transfer' }, { text: '🎁 Invite Friends' }],
+      [{ text: '🎯 Game Patterns' }, { text: '📖 Instructions' }],
+      [{ text: '🆘 24H Support 1' }, { text: '🆘 Support 2' }]
     ],
     resize_keyboard: true,
     persistent: true
