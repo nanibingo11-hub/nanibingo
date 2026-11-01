@@ -96,6 +96,16 @@ body{background:var(--bg);color:#fff;font-family:'Inter',sans-serif;padding-bott
 .bingo-cell.marked{background:var(--purple)!important;color:#fff!important}
 .bingo-cell.called-not-marked{background:#fff8dc!important;color:#8b6914!important}
 .bingo-cell.free{background:var(--purple)!important;color:#fff!important;cursor:default}
+.auto-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--panel);border:1px solid #3d226b;border-radius:12px;padding:10px 14px;margin-top:12px}
+.auto-row.on{border-color:var(--green);box-shadow:0 0 12px rgba(34,197,94,.25)}
+.auto-title{font-family:'Orbitron',sans-serif;font-size:13px;font-weight:800;color:#fff}
+.auto-sub{font-size:11px;color:var(--gray);margin-top:2px}
+.auto-switch{position:relative;display:inline-block;width:46px;height:26px;flex-shrink:0}
+.auto-switch input{opacity:0;width:0;height:0}
+.auto-slider{position:absolute;inset:0;background:#3d226b;border-radius:26px;cursor:pointer;transition:.2s}
+.auto-slider:before{content:'';position:absolute;height:20px;width:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+.auto-switch input:checked+.auto-slider{background:var(--green)}
+.auto-switch input:checked+.auto-slider:before{transform:translateX(20px)}
 .bingo-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:#271447;border:1px solid #3d226b;color:var(--gray);font-family:'Orbitron',sans-serif;font-size:17px;font-weight:900;padding:14px;border-radius:12px;cursor:pointer;margin-top:14px;transition:all .2s}
 .bingo-btn.ready{animation:flashPulse .7s infinite alternate;background:var(--green)!important;color:#fff!important;border-color:#fff!important;box-shadow:0 0 22px var(--green)}
 .bingo-btn.locked{background:#1a0a0a!important;color:#666!important;cursor:not-allowed;border-color:#333!important}
@@ -245,6 +255,10 @@ body{background:var(--bg);color:#fff;font-family:'Inter',sans-serif;padding-bott
     <h2 class="screen-title" style="margin:0">CHOOSE YOUR CARDS</h2>
     <div class="cd-countdown" id="cdCountdown">Waiting...</div>
   </div>
+  <div class="auto-row ">
+    <div><div class="auto-title">🤖 Auto Play</div><div class="auto-sub">Marks your numbers &amp; calls BINGO for you</div></div>
+    <label class="auto-switch"><input type="checkbox" class="autoToggle" onchange="setAutoPlay(this.checked)"><span class="auto-slider"></span></label>
+  </div>
   <div id="cdPrizePot" style="background:linear-gradient(135deg,rgba(250,204,21,.15),rgba(139,92,246,.15));border:1px solid rgba(250,204,21,.4);border-radius:10px;padding:10px 14px;text-align:center;font-weight:700;color:var(--gold);font-size:14px;margin-bottom:10px">
     🏆 Prize grows as players join
   </div>
@@ -297,6 +311,10 @@ body{background:var(--bg);color:#fff;font-family:'Inter',sans-serif;padding-bott
       </div>
       <div id="cardBody2" class="bingo-body"></div>
     </div>
+  </div>
+  <div class="auto-row ">
+    <div><div class="auto-title">🤖 Auto Play</div><div class="auto-sub">Marks your numbers &amp; calls BINGO for you</div></div>
+    <label class="auto-switch"><input type="checkbox" class="autoToggle" onchange="setAutoPlay(this.checked)"><span class="auto-slider"></span></label>
   </div>
   <button id="bingoBtn" class="bingo-btn" onclick="claimBingo()">🎉 BINGO!</button>
   <div class="tracker-wrap"><div id="trackerGrid" class="tracker-grid"></div></div>
@@ -709,12 +727,13 @@ body{background:var(--bg);color:#fff;font-family:'Inter',sans-serif;padding-bott
 
 <script>
 // ─── STATE ────────────────────────────────────────────────────
-  const ADMIN_PHONE_CLIENT = '251953223146';
+  const ADMIN_PHONE_CLIENT = '251912710280';
   const ADMIN_PHONE_CLIENT2 = '251934255415';
 let ws, myPlayerId, myName='', myRoomId=localStorage.getItem('roomId')||null, myStakeId=null;
 let myCardId=null, myCardNumbers=[], markedIndices=new Set(), currentBalance=0;
 let myCardId2=null, myCardNumbers2=[], markedIndices2=new Set();
 let claimWindowOpen=false, claimBarAnim=null, prevLastCalled=null;
+let autoPlay=localStorage.getItem('autoPlay')==='1', calledNums=[];
 let telegramId=null, isAdmin=false, adminToken='';
 let cardPool=[];
 
@@ -801,6 +820,8 @@ if(pageParam === 'withdraw') setTimeout(()=>{ navGo('screenWallet','navWallet');
       }).catch(()=>{});
     }
   }
+  // Tell the server our saved Auto Play choice (before any reconnect)
+  syncAutoUI(); wsSend({type:'setAutoPlay',enabled:autoPlay});
   // Try to reconnect to active game after auth
   if(myRoomId && telegramId){
     wsSend({type:'reconnect',roomId:myRoomId,telegramId:telegramId});
@@ -866,7 +887,7 @@ if(pageParam === 'withdraw') setTimeout(()=>{ navGo('screenWallet','navWallet');
       myCardId2=msg.cardId2||null; myCardNumbers2=msg.cardNumbers2||[];
       document.getElementById('potVal').innerText=`${msg.pot} ETB`;
       document.getElementById('playerCountVal').innerText=msg.playerCount;
-      markedIndices=new Set([12]); markedIndices2=new Set([12]);
+      markedIndices=new Set([12]); markedIndices2=new Set([12]); calledNums=[];
       renderBothCards();
       document.getElementById('bingoBtn').style.display='flex';
       break;
@@ -903,7 +924,7 @@ if(pageParam === 'withdraw') setTimeout(()=>{ navGo('screenWallet','navWallet');
     case 'gameStart':
       document.getElementById('potVal').innerText=`${msg.pot} ETB`;
       document.getElementById('playerCountVal').innerText=msg.players.length;
-      resetTrackerBoard(); claimWindowOpen=false; setBingoBtn('idle');
+      resetTrackerBoard(); claimWindowOpen=false; setBingoBtn('idle'); calledNums=[];
       navGo('screenGame','navGame'); break;
 
     case 'reconnected':
@@ -913,9 +934,12 @@ if(pageParam === 'withdraw') setTimeout(()=>{ navGo('screenWallet','navWallet');
       document.getElementById('potVal').innerText=`${msg.pot} ETB`;
       document.getElementById('playerCountVal').innerText=msg.playerCount;
       msg.calledNumbers.forEach(n=>{const el=document.getElementById('tb'+n);if(el)el.className='t-ball '+colClass(n);});
-      renderBothCards(); navGo('screenGame','navGame'); break;
+      calledNums=msg.calledNumbers.slice();
+      renderBothCards(); applyAutoMarks(); navGo('screenGame','navGame'); break;
 
     case 'numberCalled': onNumberCalled(msg); break;
+    case 'autoBingo': showToast('🤖 Auto Play called BINGO for you!'); break;
+    case 'autoPlaySet': break;
     case 'claimTooLate': showToast('⏰ Too late! Claim before next number.','warn'); break;
     case 'disqualified': showDisqualified(); break;
 
@@ -925,7 +949,7 @@ if(pageParam === 'withdraw') setTimeout(()=>{ navGo('screenWallet','navWallet');
       myRoomId=msg.roomId; myCardId=null; myCardId2=null;
       myCardNumbers=[]; myCardNumbers2=[];
       markedIndices=new Set([12]); markedIndices2=new Set([12]);
-      claimWindowOpen=false; hideWinnerOverlay(); if(msg.balance!==undefined)setBalance(msg.balance);
+      claimWindowOpen=false; calledNums=[]; hideWinnerOverlay(); if(msg.balance!==undefined)setBalance(msg.balance);
       resetTrackerBoard(); setBingoBtn('idle'); resetSlotUI();
       document.getElementById('cdCountdown').innerText='Waiting...';
       navGo('screenCards','navCards'); break;
@@ -1233,6 +1257,28 @@ function onNumberCalled(msg){
   playBallAudio(n);
 
   claimWindowOpen=true; setBingoBtn('ready'); startClaimBar(msg.claimWindowMs||4800);
+  calledNums=(msg.calledNumbers||calledNums.concat(n)).slice();
+  if(autoPlay) applyAutoMarks(); else refreshCardCells();
+}
+
+// ─── AUTO PLAY ────────────────────────────────────────────────
+function setAutoPlay(on){
+  autoPlay=!!on;
+  localStorage.setItem('autoPlay',autoPlay?'1':'0');
+  wsSend({type:'setAutoPlay',enabled:autoPlay});
+  syncAutoUI();
+  if(autoPlay){applyAutoMarks();showToast('🤖 Auto Play ON');}
+  else showToast('Auto Play OFF — mark your own numbers','warn');
+}
+function syncAutoUI(){
+  document.querySelectorAll('.autoToggle').forEach(c=>c.checked=autoPlay);
+  document.querySelectorAll('.auto-row').forEach(r=>r.classList.toggle('on',autoPlay));
+}
+function applyAutoMarks(){
+  if(!autoPlay) return;
+  const cs=new Set(calledNums);
+  myCardNumbers.forEach((n,i)=>{if(i!==12&&cs.has(n)) markedIndices.add(i);});
+  if(myCardId2) myCardNumbers2.forEach((n,i)=>{if(i!==12&&cs.has(n)) markedIndices2.add(i);});
   refreshCardCells();
 }
 function startClaimBar(ms){
@@ -1319,7 +1365,7 @@ function renderBothCards(){
   }
 }
 function toggleCell(i,cell,prefix){
-  if(i===12) return;
+  if(i===12||autoPlay) return;
   const isCard2=prefix==='b2_';
   const ms=isCard2?markedIndices2:markedIndices;
   if(ms.has(i)){ms.delete(i);cell.classList.remove('marked');}
